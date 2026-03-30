@@ -1,25 +1,13 @@
-# ---- Build Stage ----
-FROM node:18-alpine AS builder
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
+#!/bin/bash
+set -e
 
-# ---- Production Stage ----
-FROM node:18-alpine
-WORKDIR /app
+BACKEND_HOST=${BACKEND_HOST:-"backend"}
 
-# Create non-root user for security
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+echo "Injecting BACKEND_HOST=${BACKEND_HOST} into nginx config..."
+sed -i "s/BACKEND_HOST/${BACKEND_HOST}/g" /etc/nginx/conf.d/default.conf
 
-COPY --from=builder /app/node_modules ./node_modules
-COPY . .
+# Validate nginx config before starting
+nginx -t
 
-RUN chown -R appuser:appgroup /app
-USER appuser
-
-EXPOSE 5000
-
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -qO- http://localhost:5000/health || exit 1
-
-CMD ["node", "server.js"]
+echo "Frontend ready → proxying /api/* to http://${BACKEND_HOST}:5000"
+exec "$@"
