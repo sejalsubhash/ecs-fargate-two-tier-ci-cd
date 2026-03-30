@@ -1,0 +1,62 @@
+version: 0.2
+
+# AWS CodeBuild buildspec — builds both frontend & backend images,
+# pushes them to ECR, and updates ECS task definitions.
+#
+# Required CodeBuild Environment Variables (set in pipeline):
+#   AWS_DEFAULT_REGION    e.g. ap-south-1
+#   AWS_ACCOUNT_ID        e.g. 123456789012
+#   FRONTEND_REPO_NAME    e.g. two-tier-frontend
+#   BACKEND_REPO_NAME     e.g. two-tier-backend
+#   ECS_CLUSTER_NAME      e.g. two-tier-cluster
+#   FRONTEND_SERVICE_NAME e.g. frontend-service
+#   BACKEND_SERVICE_NAME  e.g. backend-service
+#   FRONTEND_TASK_DEF     e.g. frontend-task
+#   BACKEND_TASK_DEF      e.g. backend-task
+
+phases:
+  pre_build:
+    commands:
+      - echo "=== Logging in to Amazon ECR ==="
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c1-7)
+      - IMAGE_TAG=${COMMIT_HASH:=latest}
+      - FRONTEND_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$FRONTEND_REPO_NAME
+      - BACKEND_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$BACKEND_REPO_NAME
+      - echo "Image tag -> $IMAGE_TAG"
+
+  build:
+    commands:
+      - echo "=== Building Backend Image ==="
+      - docker build -t $BACKEND_URI:latest -t $BACKEND_URI:$IMAGE_TAG ./backend
+
+      - echo "=== Building Frontend Image ==="
+      - docker build -t $FRONTEND_URI:latest -t $FRONTEND_URI:$IMAGE_TAG ./frontend
+
+  post_build:
+    commands:
+      - echo "=== Pushing Backend to ECR ==="
+      - docker push $BACKEND_URI:latest
+      - docker push $BACKEND_URI:$IMAGE_TAG
+
+      - echo "=== Pushing Frontend to ECR ==="
+      - docker push $FRONTEND_URI:latest
+      - docker push $FRONTEND_URI:$IMAGE_TAG
+
+      - echo "=== Updating ECS Task Definitions ==="
+      # Fetch current task def, update image URI, register new revision
+      - BACKEND_TASK_JSON=$(aws ecs describe-task-definition --task-definition $BACKEND_TASK_DEF --query 'taskDefinition')
+      - NEW_BACKEND_TASK=$(echo $BACKEND_TASK_JSON | python3 -c "import json,sys; td=json.load(sys.stdin); td['containerDefinitions'][0]['image']='$BACKEND_URI:$IMAGE_TAG'; [td.pop(k,None) for k in ['taskDefinitionArn','revision','status','requiresAttributes','compatibilities','registeredAt','registeredBy']]; print(json.dumps(td))")
+      - aws ecs register-task-definition --cli-input-json "$NEW_BACKEND_TASK"
+
+      - FRONTEND_TASK_JSON=$(aws ecs describe-task-definition --task-definition $FRONTEND_TASK_DEF --query 'taskDefinition')
+      - NEW_FRONTEND_TASK=$(echo $FRONTEND_TASK_JSON | python3 -c "import json,sys; td=json.load(sys.stdin); td['containerDefinitions'][0]['image']='$FRONTEND_URI:$IMAGE_TAG'; [td.pop(k,None) for k in ['taskDefinitionArn','revision','status','requiresAttributes','compatibilities','registeredAt','registeredBy']]; print(json.dumps(td))")
+      - aws ecs register-task-definition --cli-input-json "$NEW_FRONTEND_TASK"
+
+      - echo "=== Generating imagedefinitions.json for CodePipeline ==="
+      - printf '[{"name":"backend","imageUri":"%s"},{"name":"frontend","imageUri":"%s"}]' $BACKEND_URI:$IMAGE_TAG $FRONTEND_URI:$IMAGE_TAG > imagedefinitions.json
+      - cat imagedefinitions.json
+
+artifacts:
+  files:
+    - imagedefinitions.json
