@@ -26,7 +26,7 @@ app.get('/api/items', (req, res) => {
 app.get('/api/status', (req, res) => {
   res.json({
     service: 'Two-Tier App Backend',
-    version: '1.0.0',
+    version: '2.0.0',
     uptime: process.uptime(),
     environment: process.env.NODE_ENV || 'development',
     region: process.env.AWS_REGION || 'local'
