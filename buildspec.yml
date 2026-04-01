@@ -43,31 +43,38 @@ phases:
       - echo "=== Verifying images exist locally ==="
       - docker images | grep $AWS_ACCOUNT_ID
 
-  post_build:
-    commands:
-      - echo "=== Pushing Backend to ECR ==="
-      - docker push $BACKEND_URI:latest
-      - docker push $BACKEND_URI:$IMAGE_TAG
+post_build:
+  commands:
+    - echo "=== Pushing Backend to ECR ==="
+    - docker push $BACKEND_URI:latest
+    - docker push $BACKEND_URI:$IMAGE_TAG
 
-      - echo "=== Pushing Frontend to ECR ==="
-      - docker push $FRONTEND_URI:latest
-      - docker push $FRONTEND_URI:$IMAGE_TAG
+    - echo "=== Pushing Frontend to ECR ==="
+    - docker push $FRONTEND_URI:latest
+    - docker push $FRONTEND_URI:$IMAGE_TAG
 
-      - echo "=== Updating Backend Task Definition ==="
-      - BACKEND_TASK_JSON=$(aws ecs describe-task-definition --task-definition $BACKEND_TASK_DEF --query 'taskDefinition')
-      - NEW_BACKEND_TASK=$(echo $BACKEND_TASK_JSON | python3 -c "import json,sys; td=json.load(sys.stdin); td['containerDefinitions'][0]['image']='$BACKEND_URI:$IMAGE_TAG'; [td.pop(k,None) for k in ['taskDefinitionArn','revision','status','requiresAttributes','compatibilities','registeredAt','registeredBy']]; print(json.dumps(td))")
-      - aws ecs register-task-definition --cli-input-json "$NEW_BACKEND_TASK"
+    - echo "=== Updating Backend Task Definition ==="
+    - BACKEND_TASK_JSON=$(aws ecs describe-task-definition --task-definition $BACKEND_TASK_DEF --query 'taskDefinition')
+    - NEW_BACKEND_TASK=$(echo $BACKEND_TASK_JSON | python3 -c "import json,sys; td=json.load(sys.stdin); td['containerDefinitions'][0]['image']='$BACKEND_URI:$IMAGE_TAG'; [td.pop(k,None) for k in ['taskDefinitionArn','revision','status','requiresAttributes','compatibilities','registeredAt','registeredBy']]; print(json.dumps(td))")
+    - aws ecs register-task-definition --cli-input-json "$NEW_BACKEND_TASK"
 
-      - echo "=== Updating Frontend Task Definition ==="
-      - FRONTEND_TASK_JSON=$(aws ecs describe-task-definition --task-definition $FRONTEND_TASK_DEF --query 'taskDefinition')
-      - NEW_FRONTEND_TASK=$(echo $FRONTEND_TASK_JSON | python3 -c "import json,sys; td=json.load(sys.stdin); td['containerDefinitions'][0]['image']='$FRONTEND_URI:$IMAGE_TAG'; [td.pop(k,None) for k in ['taskDefinitionArn','revision','status','requiresAttributes','compatibilities','registeredAt','registeredBy']]; print(json.dumps(td))")
-      - aws ecs register-task-definition --cli-input-json "$NEW_FRONTEND_TASK"
+    - echo "=== Updating Frontend Task Definition ==="
+    - FRONTEND_TASK_JSON=$(aws ecs describe-task-definition --task-definition $FRONTEND_TASK_DEF --query 'taskDefinition')
+    - NEW_FRONTEND_TASK=$(echo $FRONTEND_TASK_JSON | python3 -c "import json,sys; td=json.load(sys.stdin); td['containerDefinitions'][0]['image']='$FRONTEND_URI:$IMAGE_TAG'; [td.pop(k,None) for k in ['taskDefinitionArn','revision','status','requiresAttributes','compatibilities','registeredAt','registeredBy']]; print(json.dumps(td))")
+    - aws ecs register-task-definition --cli-input-json "$NEW_FRONTEND_TASK"
 
-      - echo "=== Generating imagedefinitions.json ==="
-      - printf '[{"name":"backend","imageUri":"%s"},{"name":"frontend","imageUri":"%s"}]' $BACKEND_URI:$IMAGE_TAG $FRONTEND_URI:$IMAGE_TAG > imagedefinitions.json
-      - cat imagedefinitions.json
-      - echo "=== BUILD COMPLETE ==="
+    - echo "=== Generating separate imagedefinitions files ==="
+    - printf '[{"name":"backend","imageUri":"%s"}]' $BACKEND_URI:$IMAGE_TAG > imagedefinitions_backend.json
+    - printf '[{"name":"frontend","imageUri":"%s"}]' $FRONTEND_URI:$IMAGE_TAG > imagedefinitions_frontend.json
+
+    - echo "Backend imagedefinitions:"
+    - cat imagedefinitions_backend.json
+    - echo "Frontend imagedefinitions:"
+    - cat imagedefinitions_frontend.json
 
 artifacts:
   files:
-    - imagedefinitions.json
+    - imagedefinitions_backend.json
+    - imagedefinitions_frontend.json
+  discard-paths: yes
+
